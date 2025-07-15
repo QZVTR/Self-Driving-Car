@@ -11,6 +11,11 @@ clock = pygame.time.Clock()
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
+BLUE = (0, 0, 255)    # For left lane (ahead)
+GREEN = (0, 255, 0)   # For middle lane (ahead)
+CYAN = (0, 255, 255)  # For right lane (ahead)
+PURPLE = (128, 0, 128)  # For behind cars
+YELLOW = (255, 255, 0)  # For side cars
 
 carWidth, carHeight = 50, 50
 laneWidth = screenWidth // 3
@@ -19,10 +24,12 @@ lanes = [laneWidth // 2, laneWidth // 2 + laneWidth, laneWidth // 2 + 2 * laneWi
 class AgentCar:
     def __init__(self):
         self.lane = 1
-        self.y = screenHeight - 100
+        self.y = screenHeight - 300
         self.rect = pygame.Rect(lanes[self.lane] - carWidth // 2, self.y, carWidth, carHeight)
         self.cooldown = 0  # Frames since last lane switch
         self.cooldownPeriod = 10  # Frames to wait before next lane switch (0.167s at 60 FPS)
+        self.speed = 0
+        self.maxSpeed = 5
     
     def move(self, action):
          # Decrease cooldown
@@ -36,7 +43,15 @@ class AgentCar:
         elif action == 2 and self.lane < 2:
             self.lane += 1
             self.cooldown = self.cooldownPeriod  # Reset cooldown
+        elif action == 3:
+            self.speed = min(self.speed + 0.5, self.maxSpeed)
+        elif action == 4:
+            self.speed =max(self.speed - 0.5, -self.maxSpeed)
+
         self.rect.x = lanes[self.lane] - carWidth // 2
+        self.y -= self.speed 
+        self.y = max(100, min(self.y, screenHeight - 100))
+        self.rect.y = self.y
 
 class EnemyCar:
     def __init__(self, lane, speed):
@@ -57,7 +72,7 @@ class Environment:
         self.spawnProbability = 0.02
         self.minSpeed = 2
         self.maxSpeed = 5
-        self.maxEnemyCars = 5 
+        self.maxEnemyCars = 3 
         self.font = pygame.font.SysFont('arial', 24)
 
     def reset(self):
@@ -76,6 +91,10 @@ class Environment:
             if sideCollision:
                 reward = -100
                 done = True
+            else:
+                self.agent.move(action)
+        else:
+            self.agent.move(action)
 
         for car in self.enemyCars:
             car.update()
@@ -85,6 +104,7 @@ class Environment:
             lane = random.randint(0, 2)
             speed = random.uniform(self.minSpeed, self.maxSpeed)
             self.enemyCars.append(EnemyCar(lane, speed))
+
 
         # check collision
         collision = any(car.lane == self.agent.lane and abs(car.y - self.agent.y) < carHeight for car in self.enemyCars)
@@ -100,8 +120,14 @@ class Environment:
         #speedsAbove = []
         #distsSide = [1000, 1000, 1000]  # Default for left, middle, right lanes
         #speedsSide = [0, 0, 0]  # Default for left, middle, right lanes
-        distsAhead = [200] * 3
+        #distsAhead = [200] * 3
+        #speedsAhead = [0] * 3
+        distsAhead = [300] * 3
         speedsAhead = [0] * 3
+        distsBehind = [300] * 3
+        speedsBehind = [0] * 3
+        distsSides = [100] * 2  # Left and right adjacent lanes
+        speedsSides = [0] * 2
         """for lane in range(3):
             carsAbove = [car for car in self.enemyCars if car.lane == lane and car.y < agentY]
             if carsAbove:
@@ -130,11 +156,32 @@ class Environment:
                 distsAhead[lane] = agentY - nearest.y
                 speedsAhead[lane] = nearest.speed
         
+          # Cars behind (y > agent_y, within 300 pixels)
+        for lane in range(3):
+            cars_behind = [car for car in self.enemyCars if car.lane == lane and 
+                           car.y > agentY and (car.y - agentY) <= 300]
+            if cars_behind:
+                nearest = min(cars_behind, key=lambda c: c.y)
+                distsBehind[lane] = nearest.y - agentY
+                speedsBehind[lane] = nearest.speed
+
+        # Cars to the side (within ±100 pixels, adjacent lanes)
+        adjacent_lanes = [l for l in [0, 1, 2] if l != myLane]  # Exclude agent's lane
+        for i, lane in enumerate(adjacent_lanes):
+            cars_side = [car for car in self.enemyCars if car.lane == lane and 
+                         abs(car.y - agentY) <= 100]
+            if cars_side:
+                nearest = min(cars_side, key=lambda c: abs(c.y - agentY))
+                distsSides[i] = abs(agentY - nearest.y)
+                speedsSides[i] = nearest.speed
+        
         # Normalise distances
         distsAhead = [min(d / 300, 1) for d in distsAhead]
+        distsBehind = [min(d / 300, 1) for d in distsBehind]
+        distsSides = [min(d / 100, 1) for d in distsSides]
 
         # State: [lane_onehot (3), distsAhead (3), speedsAhead (3)]
-        state = [1 if i == myLane else 0 for i in range(3)] + distsAhead + speedsAhead
+        state = [1 if i == myLane else 0 for i in range(3)] + distsAhead + speedsAhead + distsBehind + speedsBehind + distsSides + speedsSides + [self.agent.speed / self.agent.maxSpeed]
         return np.array(state)
 
         #state = [1 if i == myLane else 0 for i in range(3)] + distsAbove + speedsAbove + distsSide + speedsSide
@@ -163,6 +210,26 @@ class Environment:
                 startPos = (lanes[self.agent.lane], agentY)
                 endPos = (lanes[nearest.lane], nearest.y)
                 pygame.draw.line(screen, lineColours[lane], startPos, endPos, 2)
+
+                        # Behind cars
+            cars_behind = [car for car in self.enemyCars if car.lane == lane and 
+                           car.y > agentY and (car.y - agentY) <= 300]
+            if cars_behind:
+                nearest = min(cars_behind, key=lambda c: c.y)
+                start_pos = (lanes[self.agent.lane], agentY)
+                end_pos = (lanes[nearest.lane], nearest.y)
+                pygame.draw.line(screen, PURPLE, start_pos, end_pos, 2)
+
+        # Side cars (adjacent lanes)
+        adjacent_lanes = [l for l in [0, 1, 2] if l != self.agent.lane]
+        for lane in adjacent_lanes:
+            cars_side = [car for car in self.enemyCars if car.lane == lane and 
+                         abs(car.y - agentY) <= 100]
+            if cars_side:
+                nearest = min(cars_side, key=lambda c: abs(c.y - agentY))
+                start_pos = (lanes[self.agent.lane], agentY)
+                end_pos = (lanes[nearest.lane], nearest.y)
+                pygame.draw.line(screen, YELLOW, start_pos, end_pos, 2)   
         
         episodeText = self.font.render(f'Episode: {episode}', True, BLACK)
         rewardText = self.font.render(f'Reward: {totalReward}', True, BLACK)
@@ -171,5 +238,5 @@ class Environment:
         pygame.display.flip()
         pygame.display.flip()
 
-    def close():
+    def close(self):
         pygame.quit()
