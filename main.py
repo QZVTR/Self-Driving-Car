@@ -45,8 +45,8 @@ def train():
 def test():
     # Load the trained model
     try:
-        agent.loadModel('dqn_model.pth')
-        print("Loaded model from dqn_model.pth")
+        agent.loadModel('dqn_model_360.pth')
+        print("Loaded model from dqn_model_360.pth")
     except FileNotFoundError:
         print("Error: dqn_model.pth not found. Please train the model first.")
         env.close()
@@ -86,10 +86,10 @@ def test():
             totalReward = 0
 
 # Run testing (comment out to train instead)
-#test()
+test()
 
 # Uncomment to train the model
-train()
+#train()
 
 # Cleanup
 env.close()
